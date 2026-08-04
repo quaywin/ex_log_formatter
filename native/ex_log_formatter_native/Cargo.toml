@@ -1,0 +1,18 @@
+[package]
+name = "ex_log_formatter_native"
+version = "0.1.0"
+authors = ["Quay Win <quaywin@gmail.com>"]
+edition = "2021"
+description = "Native Rust accelerator for ex_log_formatter Elixir package"
+
+[lib]
+name = "ex_log_formatter_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.37"
+serde_json = "1.0"
+strip-ansi-escapes = "0.2"
+regex = "1.10"
+memchr = "2.7"
+logfmt = "0.0.2"

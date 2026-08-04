@@ -1,0 +1,13 @@
+# Elixir build artifacts
+/_build/
+/deps/
+*.ez
+*.beam
+
+# Rust compilation artifacts
+/native/ex_log_formatter_native/target/
+/priv/native/
+
+# OS and Editor files
+.DS_Store
+.elixir_ls/
