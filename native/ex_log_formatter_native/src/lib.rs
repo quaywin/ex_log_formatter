@@ -348,9 +348,12 @@ fn is_5xx_status_str(status: &str) -> bool {
 fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) {
     let mut spans = Vec::new();
 
+    // 1. Detect Level
     let mut level_str = None;
+    let mut level_key = None;
     for k in &["level", "severity", "lvl", "log.level", "s", "severity_number"] {
         if let Some(v) = map.get(*k) {
+            level_key = Some(*k);
             match v {
                 Value::String(s) => { level_str = Some(s.to_string()); break; },
                 Value::Number(n) => {
@@ -367,6 +370,46 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         }
     }
 
+    // 2. Detect Timestamp
+    let mut time_str = None;
+    let mut time_key = None;
+    for k in &["timestamp", "time", "ts", "@timestamp", "datetime"] {
+        if let Some(v) = map.get(*k) {
+            time_key = Some(*k);
+            match v {
+                Value::String(s) => { time_str = Some(s.clone()); break; },
+                Value::Number(n) => { time_str = Some(n.to_string()); break; },
+                _ => {}
+            }
+        }
+    }
+
+    // 3. Detect Message
+    let mut msg_str = None;
+    let mut msg_key = None;
+    for k in &["message", "msg", "log", "message_text", "event", "detail", "details", "description", "reason", "text", "body", "payload", "summary", "info"] {
+        if let Some(v) = map.get(*k) {
+            msg_key = Some(*k);
+            match v {
+                Value::String(s) => { msg_str = Some(s.clone()); break; },
+                _ => {}
+            }
+        }
+    }
+
+    // 4. Detect Caller / Logger
+    let mut caller_str = None;
+    let mut caller_key = None;
+    for k in &["caller", "logger", "file", "source", "target"] {
+        if let Some(v) = map.get(*k) {
+            caller_key = Some(*k);
+            match v {
+                Value::String(s) => { caller_str = Some(s.clone()); break; },
+                _ => {}
+            }
+        }
+    }
+
     let has_truthy_error = ["error", "err", "exception", "stack", "stacktrace", "backtrace", "error_message", "error_details", "exc_info", "cause"]
         .iter()
         .any(|k| {
@@ -374,7 +417,7 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
                 match v {
                     Value::Null => false,
                     Value::Bool(b) => *b,
-                    Value::String(s) => !s.is_empty(),
+                    Value::String(s) => !s.is_empty() && s != "false" && s != "nil" && s != "null" && s != "\"\"",
                     Value::Array(a) => !a.is_empty(),
                     Value::Object(o) => !o.is_empty(),
                     Value::Number(_) => true,
@@ -398,53 +441,55 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         _ => has_truthy_error || has_5xx_status,
     };
 
-    let mut first = true;
+    // Construct standard, clean, human-readable structured layout:
+    // [TIMESTAMP] [LEVEL] (CALLER) MESSAGE   key1=val1 key2=val2
+    if let Some(ts) = time_str {
+        spans.push(Span::new(format!("{} ", ts), atoms::dark_gray()));
+    }
+
+    if let Some(lvl) = &level_str {
+        let lvl_atom = get_level_atom(lvl);
+        spans.push(Span::bold(format!("[{}] ", lvl.to_uppercase()), lvl_atom));
+    }
+
+    if let Some(caller) = caller_str {
+        spans.push(Span::new(format!("({}) ", caller), atoms::dark_gray()));
+    }
+
+    if let Some(msg) = msg_str {
+        spans.extend(do_sub_highlight(&msg));
+        spans.push(Span::new("  ", atoms::white()));
+    }
+
+    // Append remaining keys
+    let mut first_extra = true;
     for (k, v) in map {
-        let prefix = if first { "" } else { " " };
-        first = false;
+        let k_str = k.as_str();
+        if Some(k_str) == level_key || Some(k_str) == time_key || Some(k_str) == msg_key || Some(k_str) == caller_key {
+            continue;
+        }
+
+        let prefix = if first_extra { "" } else { " " };
+        first_extra = false;
 
         let key_span = Span::new(format!("{}{}", prefix, format!("{}=", k)), atoms::cyan());
         spans.push(key_span);
 
-        let k_lower = k.to_lowercase();
-        if matches!(k_lower.as_str(), "level" | "severity" | "lvl" | "log.level" | "s") {
-            let str_val = match v {
-                Value::String(s) => s.to_string(),
-                Value::Number(n) => n.to_string(),
-                _ => v.to_string(),
-            };
-            let lvl_atom = get_level_atom(&str_val);
-            let formatted_lvl = format!("[{}]", str_val.to_uppercase());
-            spans.push(Span::bold(formatted_lvl, lvl_atom));
-        } else if matches!(k_lower.as_str(), "timestamp" | "time" | "ts" | "@timestamp" | "datetime") {
-            let str_val = match v {
-                Value::String(s) => s.to_string(),
-                _ => v.to_string(),
-            };
-            spans.push(Span::new(str_val, atoms::dark_gray()));
-        } else if matches!(k_lower.as_str(), "message" | "msg" | "log" | "message_text" | "event" | "detail" | "details" | "description" | "reason" | "text" | "body" | "payload" | "summary" | "info") {
-            let str_val = match v {
-                Value::String(s) => s.to_string(),
-                _ => v.to_string(),
-            };
-            spans.extend(do_sub_highlight(&str_val));
-        } else {
-            match v {
-                Value::String(s) => {
-                    spans.extend(do_sub_highlight(s));
-                }
-                Value::Number(n) => {
-                    spans.push(Span::new(n.to_string(), atoms::yellow()));
-                }
-                Value::Bool(b) => {
-                    spans.push(Span::new(b.to_string(), atoms::magenta()));
-                }
-                Value::Null => {
-                    spans.push(Span::new("null", atoms::dark_gray()));
-                }
-                _ => {
-                    spans.push(Span::new(v.to_string(), atoms::dark_gray()));
-                }
+        match v {
+            Value::String(s) => {
+                spans.extend(do_sub_highlight(s));
+            }
+            Value::Number(n) => {
+                spans.push(Span::new(n.to_string(), atoms::yellow()));
+            }
+            Value::Bool(b) => {
+                spans.push(Span::new(b.to_string(), atoms::magenta()));
+            }
+            Value::Null => {
+                spans.push(Span::new("null", atoms::dark_gray()));
+            }
+            _ => {
+                spans.push(Span::new(v.to_string(), atoms::dark_gray()));
             }
         }
     }
@@ -512,7 +557,7 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
 
     for (key, clean_val, raw_val, start, end) in matches {
         if start > last_pos {
-            spans.push(Span::new(&line[last_pos..start], atoms::white()));
+            spans.extend(do_sub_highlight(&line[last_pos..start]));
         }
 
         let key_span = Span::new(format!("{}=", key), atoms::cyan());
@@ -534,7 +579,7 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
     }
 
     if last_pos < line.len() {
-        spans.push(Span::new(&line[last_pos..], atoms::white()));
+        spans.extend(do_sub_highlight(&line[last_pos..]));
     }
 
     Some((spans, is_err))
