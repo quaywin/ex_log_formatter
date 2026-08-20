@@ -444,16 +444,19 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
     // Construct standard, clean, human-readable structured layout:
     // [TIMESTAMP] [LEVEL] (CALLER) MESSAGE   key1=val1 key2=val2
     if let Some(ts) = time_str {
-        spans.push(Span::new(format!("{} ", ts), atoms::dark_gray()));
+        spans.push(Span::new(ts, atoms::dark_gray()));
+        spans.push(Span::new(" ", atoms::white()));
     }
 
     if let Some(lvl) = &level_str {
         let lvl_atom = get_level_atom(lvl);
-        spans.push(Span::bold(format!("[{}] ", lvl.to_uppercase()), lvl_atom));
+        spans.push(Span::bold(format!("[{}]", lvl.to_uppercase()), lvl_atom));
+        spans.push(Span::new(" ", atoms::white()));
     }
 
     if let Some(caller) = caller_str {
-        spans.push(Span::new(format!("({}) ", caller), atoms::dark_gray()));
+        spans.push(Span::new(format!("({})", caller), atoms::dark_gray()));
+        spans.push(Span::new(" ", atoms::white()));
     }
 
     if let Some(msg) = msg_str {
