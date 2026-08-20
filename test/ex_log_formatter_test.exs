@@ -33,4 +33,21 @@ defmodule ExLogFormatterTest do
     assert complete == ["line1", "line2"]
     assert remaining == "line3_incomp"
   end
+
+  test "parses Logfmt key=value streams" do
+    logfmt = "time=2026-08-04T13:14:00Z level=info msg=\"User logged in\" ip=192.168.1.10 status=200"
+    {spans, is_error} = ExLogFormatter.format_line_with_meta(logfmt)
+    assert is_error == false
+    assert length(spans) > 0
+    contents = Enum.map(spans, & &1.content)
+    assert "time=" in contents
+    assert "[INFO]" in contents
+  end
+
+  test "parses traditional bracket level text logs" do
+    text = "2026-08-04T13:14:00Z [ERROR] Database connection refused on port 5432"
+    {spans, is_error} = ExLogFormatter.format_line_with_meta(text)
+    assert is_error == true
+    assert length(spans) > 0
+  end
 end

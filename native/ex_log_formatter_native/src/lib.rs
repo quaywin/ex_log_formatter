@@ -67,10 +67,39 @@ impl Span {
 }
 
 static SUB_HIGHLIGHT_RE: OnceLock<Regex> = OnceLock::new();
+static LOGFMT_RE: OnceLock<Regex> = OnceLock::new();
+static GENERAL_LOG_RE: OnceLock<Regex> = OnceLock::new();
+static ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
 
 fn get_sub_highlight_re() -> &'static Regex {
     SUB_HIGHLIGHT_RE.get_or_init(|| {
         Regex::new(r#"(?i)(?P<uuid>\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)|(?P<hash>\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{40}\b)|(?P<url>\bhttps?://[^\s]+)|(?P<ip_bracket>\[[0-9a-fA-F:]+\](?::\d{1,5})?)|(?P<ip_v4>\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::\d{1,5}|/(?:[0-9]|[12][0-9]|3[0-2]))?\b)|(?P<ip_v6>\b(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)|(?P<path>(?:^|[\s"'\x28])/(?:[a-zA-Z0-9._-]+/)*[a-zA-Z0-9._-]*)|(?P<duration>\b\d+(?:\.\d+)?(?:µs|us|ms|s|min|ns)\b)|(?P<method>\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b)|(?P<status>\b[1-5]\d{2}\b)"#).unwrap()
+    })
+}
+
+fn get_logfmt_re() -> &'static Regex {
+    LOGFMT_RE.get_or_init(|| {
+        Regex::new(r#"(?P<key>[a-zA-Z0-9_.-]+)=(?:"(?P<qval>[^"]*)"|(?P<uval>[^\s]+))"#).unwrap()
+    })
+}
+
+fn get_general_log_re() -> &'static Regex {
+    GENERAL_LOG_RE.get_or_init(|| {
+        Regex::new(r#"(?i)^(?:(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s)?(?:(?:\[(?P<bracket_lvl>[a-zA-Z0-9_-]+)\]|(?P<colon_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure)\b):|(?P<bare_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure)\b))\s?)?(?P<msg>.*)$"#).unwrap()
+    })
+}
+
+fn get_error_keywords_re() -> &'static Regex {
+    ERROR_KEYWORDS_RE.get_or_init(|| {
+        Regex::new(r#"(?i)\b(?:panic|fatal|exception|crash|runtimeerror|compileerror|unhandled|traceback|backtrace)\b|\*\*\s*\(|\bcaused by:|\b\s*at\s+[a-zA-Z0-9_.$]+\("#).unwrap()
+    })
+}
+
+static STRICT_ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
+
+fn get_strict_error_keywords_re() -> &'static Regex {
+    STRICT_ERROR_KEYWORDS_RE.get_or_init(|| {
+        Regex::new(r#"(?i)(?:\b(?:panic|runtimeerror|compileerror)\b:\s*|\b(?:fatal|uncaught|unhandled)\b|\*\*\s*\(|\btraceback \(most recent call last\):|\bcaused by:|\bgoroutine \d+ \[|\bstack backtrace:)"#).unwrap()
     })
 }
 
@@ -191,6 +220,275 @@ fn do_sub_highlight(text: &str) -> Vec<Span> {
     }
 }
 
+fn get_level_atom(lvl: &str) -> Atom {
+    match lvl.trim().to_lowercase().as_str() {
+        "info" => atoms::green(),
+        "warn" | "warning" => atoms::yellow(),
+        "error" | "err" | "fatal" | "critical" | "crit" | "emerg" | "emergency" | "stderr"
+        | "fail" | "failure" | "panic" | "severe" | "50" | "60" | "0" | "1" | "2" | "3" => atoms::red(),
+        "debug" | "trace" => atoms::magenta(),
+        _ => atoms::cyan(),
+    }
+}
+
+fn is_error_level(lvl: &str) -> bool {
+    let l = lvl.trim().to_lowercase();
+    matches!(
+        l.as_str(),
+        "error" | "err" | "fatal" | "critical" | "crit" | "emerg" | "emergency" | "stderr"
+        | "fail" | "failure" | "panic" | "severe" | "e" | "f" | "50" | "60" | "0" | "1" | "2" | "3"
+    )
+}
+
+fn is_non_error_level(lvl: &str) -> bool {
+    let l = lvl.trim().to_lowercase();
+    matches!(
+        l.as_str(),
+        "info" | "warn" | "warning" | "debug" | "trace" | "notice" | "30" | "20" | "10" | "4" | "5" | "6" | "7" | "i" | "w" | "d"
+    )
+}
+
+fn is_5xx_status_str(status: &str) -> bool {
+    let s = status.trim();
+    s.len() == 3 && s.starts_with('5') && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) {
+    let mut spans = Vec::new();
+
+    let mut level_str = None;
+    for k in &["level", "severity", "lvl", "log.level", "s"] {
+        if let Some(v) = map.get(*k) {
+            match v {
+                Value::String(s) => { level_str = Some(s.to_string()); break; },
+                Value::Number(n) => { level_str = Some(n.to_string()); break; },
+                _ => {}
+            }
+        }
+    }
+
+    let has_truthy_error = ["error", "err", "exception", "stack", "stacktrace", "backtrace", "error_message", "error_details", "exc_info", "cause"]
+        .iter()
+        .any(|k| {
+            if let Some(v) = map.get(*k) {
+                match v {
+                    Value::Null => false,
+                    Value::Bool(b) => *b,
+                    Value::String(s) => !s.is_empty(),
+                    Value::Array(a) => !a.is_empty(),
+                    Value::Object(o) => !o.is_empty(),
+                    Value::Number(_) => true,
+                }
+            } else {
+                false
+            }
+        });
+
+    let has_5xx_status = map.get("status").map_or(false, |v| {
+        match v {
+            Value::Number(n) => n.as_u64().map_or(false, |code| code >= 500 && code < 600),
+            Value::String(s) => is_5xx_status_str(s),
+            _ => false,
+        }
+    });
+
+    let is_err = match &level_str {
+        Some(lvl) if is_error_level(lvl) => true,
+        Some(lvl) if is_non_error_level(lvl) => has_truthy_error || has_5xx_status,
+        _ => has_truthy_error || has_5xx_status,
+    };
+
+    let mut first = true;
+    for (k, v) in map {
+        let prefix = if first { "" } else { " " };
+        first = false;
+
+        let key_span = Span::new(format!("{}{}", prefix, format!("{}=", k)), atoms::cyan());
+        spans.push(key_span);
+
+        let k_lower = k.to_lowercase();
+        if matches!(k_lower.as_str(), "level" | "severity" | "lvl" | "log.level" | "s") {
+            let str_val = match v {
+                Value::String(s) => s.to_string(),
+                Value::Number(n) => n.to_string(),
+                _ => v.to_string(),
+            };
+            let lvl_atom = get_level_atom(&str_val);
+            let formatted_lvl = format!("[{}]", str_val.to_uppercase());
+            spans.push(Span::bold(formatted_lvl, lvl_atom));
+        } else if matches!(k_lower.as_str(), "timestamp" | "time" | "ts" | "@timestamp" | "datetime") {
+            let str_val = match v {
+                Value::String(s) => s.to_string(),
+                _ => v.to_string(),
+            };
+            spans.push(Span::new(str_val, atoms::dark_gray()));
+        } else if matches!(k_lower.as_str(), "message" | "msg" | "log" | "message_text" | "event" | "detail" | "details" | "description" | "reason" | "text" | "body" | "payload" | "summary" | "info") {
+            let str_val = match v {
+                Value::String(s) => s.to_string(),
+                _ => v.to_string(),
+            };
+            spans.extend(do_sub_highlight(&str_val));
+        } else {
+            match v {
+                Value::String(s) => {
+                    spans.extend(do_sub_highlight(s));
+                }
+                Value::Number(n) => {
+                    spans.push(Span::new(n.to_string(), atoms::yellow()));
+                }
+                Value::Bool(b) => {
+                    spans.push(Span::new(b.to_string(), atoms::magenta()));
+                }
+                Value::Null => {
+                    spans.push(Span::new("null", atoms::dark_gray()));
+                }
+                _ => {
+                    spans.push(Span::new(v.to_string(), atoms::dark_gray()));
+                }
+            }
+        }
+    }
+
+    (spans, is_err)
+}
+
+fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
+    if !line.contains('=') || line.contains("=>") || line.contains("%{") {
+        return None;
+    }
+
+    let re = get_logfmt_re();
+    let mut matches = Vec::new();
+
+    for cap in re.captures_iter(line) {
+        if let Some(m) = cap.get(0) {
+            let key = cap.name("key").map(|k| k.as_str()).unwrap_or("");
+            let qval = cap.name("qval").map(|v| v.as_str());
+            let uval = cap.name("uval").map(|v| v.as_str());
+            let clean_val = qval.or(uval).unwrap_or("");
+            let raw_val = &line[m.start() + key.len() + 1..m.end()];
+            matches.push((key, clean_val, raw_val, m.start(), m.end()));
+        }
+    }
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    let has_known_key = matches.iter().any(|(k, _, _, _, _)| {
+        matches!(k.to_lowercase().as_str(), "level" | "lvl" | "severity" | "msg" | "message" | "ts" | "time" | "status" | "err" | "error")
+    });
+
+    if !has_known_key && matches.len() < 2 {
+        return None;
+    }
+
+    let mut level_str = None;
+    for (k, clean_val, _, _, _) in &matches {
+        if matches!(k.to_lowercase().as_str(), "level" | "lvl" | "severity") {
+            level_str = Some(*clean_val);
+            break;
+        }
+    }
+
+    let has_truthy_error = matches.iter().any(|(k, clean_val, _, _, _)| {
+        let kl = k.to_lowercase();
+        (kl == "error" || kl == "err" || kl == "exception" || kl == "stack" || kl == "stacktrace")
+            && !clean_val.is_empty() && *clean_val != "false" && *clean_val != "nil" && *clean_val != "null" && *clean_val != "\"\""
+    });
+
+    let has_5xx_status = matches.iter().any(|(k, clean_val, _, _, _)| {
+        k.to_lowercase() == "status" && is_5xx_status_str(clean_val)
+    });
+
+    let is_err = match level_str {
+        Some(lvl) if is_error_level(lvl) => true,
+        Some(lvl) if is_non_error_level(lvl) => has_truthy_error || has_5xx_status,
+        _ => has_truthy_error || has_5xx_status,
+    };
+
+    let mut spans = Vec::new();
+    let mut last_pos = 0;
+
+    for (key, clean_val, raw_val, start, end) in matches {
+        if start > last_pos {
+            spans.push(Span::new(&line[last_pos..start], atoms::white()));
+        }
+
+        let key_span = Span::new(format!("{}=", key), atoms::cyan());
+        spans.push(key_span);
+
+        let k_lower = key.to_lowercase();
+        if matches!(k_lower.as_str(), "level" | "lvl" | "severity") {
+            let lvl_atom = get_level_atom(clean_val);
+            spans.push(Span::bold(format!("[{}]", clean_val.to_uppercase()), lvl_atom));
+        } else if matches!(k_lower.as_str(), "ts" | "time" | "timestamp") {
+            spans.push(Span::new(clean_val, atoms::dark_gray()));
+        } else if matches!(k_lower.as_str(), "msg" | "message") {
+            spans.extend(do_sub_highlight(clean_val));
+        } else {
+            spans.extend(do_sub_highlight(raw_val));
+        }
+
+        last_pos = end;
+    }
+
+    if last_pos < line.len() {
+        spans.push(Span::new(&line[last_pos..], atoms::white()));
+    }
+
+    Some((spans, is_err))
+}
+
+fn parse_general_log(line: &str) -> (Vec<Span>, bool) {
+    let re = get_general_log_re();
+    if let Some(cap) = re.captures(line) {
+        let ts = cap.name("ts").map(|m| m.as_str()).unwrap_or("");
+        let bracket_lvl = cap.name("bracket_lvl").map(|m| m.as_str()).unwrap_or("");
+        let colon_lvl = cap.name("colon_lvl").map(|m| m.as_str()).unwrap_or("");
+        let bare_lvl = cap.name("bare_lvl").map(|m| m.as_str()).unwrap_or("");
+        let msg = cap.name("msg").map(|m| m.as_str()).unwrap_or("");
+
+        let level_str = if !bracket_lvl.is_empty() {
+            Some(bracket_lvl)
+        } else if !colon_lvl.is_empty() {
+            Some(colon_lvl)
+        } else if !bare_lvl.is_empty() {
+            Some(bare_lvl)
+        } else {
+            None
+        };
+
+        let is_err = match level_str {
+            Some(lvl) if is_error_level(lvl) => true,
+            Some(lvl) if is_non_error_level(lvl) => get_strict_error_keywords_re().is_match(line) || line.contains(" 500 ") || line.contains(" 502 ") || line.contains(" 503 "),
+            _ => get_error_keywords_re().is_match(line) || line.contains(" 500 ") || line.contains("HTTP 5"),
+        };
+
+        let mut spans = Vec::new();
+        if !ts.is_empty() {
+            spans.push(Span::new(format!("{} ", ts), atoms::dark_gray()));
+        }
+
+        if !bracket_lvl.is_empty() {
+            let lvl_atom = get_level_atom(bracket_lvl);
+            spans.push(Span::bold(format!("[{}] ", bracket_lvl), lvl_atom));
+        } else if !colon_lvl.is_empty() {
+            let lvl_atom = get_level_atom(colon_lvl);
+            spans.push(Span::bold(format!("{}: ", colon_lvl), lvl_atom));
+        } else if !bare_lvl.is_empty() {
+            let lvl_atom = get_level_atom(bare_lvl);
+            spans.push(Span::bold(format!("{} ", bare_lvl), lvl_atom));
+        }
+
+        spans.extend(do_sub_highlight(msg));
+        (spans, is_err)
+    } else {
+        let is_err = get_error_keywords_re().is_match(line);
+        (do_sub_highlight(line), is_err)
+    }
+}
+
 #[rustler::nif]
 pub fn sub_highlight_native(text: String) -> Vec<Span> {
     do_sub_highlight(&text)
@@ -202,11 +500,10 @@ pub fn parse_log_line(line: String) -> (Vec<Span>, bool) {
         return (vec![Span::new("", atoms::white())], false);
     }
 
-    // 1. Strip ANSI escapes
     let clean_line = do_sanitize_log(&line);
     let trimmed = clean_line.trim();
 
-    // 2. Try JSON Parse
+    // 1. Try JSON
     if trimmed.starts_with('{') && trimmed.ends_with('}') {
         if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
             if let Some(map) = value.as_object() {
@@ -215,47 +512,29 @@ pub fn parse_log_line(line: String) -> (Vec<Span>, bool) {
         }
     }
 
-    // 3. Fallback: Parse general text line + sub-highlight
-    let is_err = trimmed.to_lowercase().contains("error") || trimmed.to_lowercase().contains("err");
-    let spans = do_sub_highlight(&clean_line);
-    (spans, is_err)
-}
-
-fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) {
-    let mut spans = Vec::new();
-    let mut is_err = false;
-
-    if let Some(lvl) = map.get("level").or_else(|| map.get("severity")).or_else(|| map.get("lvl")) {
-        let lvl_str = lvl.as_str().unwrap_or("").to_lowercase();
-        if lvl_str == "error" || lvl_str == "fatal" || lvl_str == "crit" || lvl_str == "err" {
-            is_err = true;
-        }
-    }
-
-    let mut first = true;
-    for (k, v) in map {
-        let prefix = if first { "" } else { " " };
-        first = false;
-
-        spans.push(Span::new(format!("{}{}", prefix, k), atoms::cyan()));
-
-        match v {
-            Value::String(s) => {
-                spans.push(Span::new(format!("={}", s), atoms::green()));
-            }
-            Value::Number(n) => {
-                spans.push(Span::new(format!("={}", n), atoms::yellow()));
-            }
-            Value::Bool(b) => {
-                spans.push(Span::new(format!("={}", b), atoms::magenta()));
-            }
-            _ => {
-                spans.push(Span::new(format!("={}", v), atoms::dark_gray()));
+    // Prefix JSON (e.g. "2026-08-04T10:15:00Z stdout F {"level":"info",...}")
+    if trimmed.contains('{') && trimmed.ends_with('}') {
+        if let Some(idx) = trimmed.find('{') {
+            let prefix = &trimmed[..idx];
+            let json_part = &trimmed[idx..];
+            if let Ok(value) = serde_json::from_str::<Value>(json_part) {
+                if let Some(map) = value.as_object() {
+                    let (mut prefix_spans, p_err) = parse_general_log(prefix);
+                    let (json_spans, j_err) = parse_json_object(map);
+                    prefix_spans.extend(json_spans);
+                    return (prefix_spans, p_err || j_err);
+                }
             }
         }
     }
 
-    (spans, is_err)
+    // 2. Try Logfmt
+    if let Some((spans, is_err)) = try_parse_logfmt(&clean_line) {
+        return (spans, is_err);
+    }
+
+    // 3. General Regex Log + Sub-highlight
+    parse_general_log(&clean_line)
 }
 
 rustler::init!("Elixir.ExLogFormatter.Native");
