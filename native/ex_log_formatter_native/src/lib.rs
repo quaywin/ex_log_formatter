@@ -102,14 +102,23 @@ fn get_strict_error_keywords_re() -> &'static Regex {
     })
 }
 
-fn do_sanitize_log(line: &str) -> String {
-    let bytes = strip_ansi_escapes::strip(line);
-    String::from_utf8_lossy(&bytes).to_string()
+use rustler::Binary;
+
+fn do_sanitize_log(slice: &[u8]) -> String {
+    let bytes = strip_ansi_escapes::strip(slice);
+    let s = String::from_utf8_lossy(&bytes);
+    let mut cleaned = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c != '\u{FFFD}' && (c == '\t' || c == '\n' || c == '\r' || !c.is_control()) {
+            cleaned.push(c);
+        }
+    }
+    cleaned
 }
 
 #[rustler::nif]
-pub fn sanitize_log(line: String) -> String {
-    do_sanitize_log(&line)
+pub fn sanitize_log(line: Binary) -> String {
+    do_sanitize_log(line.as_slice())
 }
 
 #[rustler::nif]
@@ -189,14 +198,19 @@ pub fn wrap_spans(spans: Vec<Span>, width: usize) -> Vec<Vec<Span>> {
 }
 
 #[rustler::nif]
-pub fn process_chunk_native(chunk: String, buffer: String, max_len: usize) -> (Vec<String>, String) {
-    let combined = format!("{}{}", buffer, chunk);
+pub fn process_chunk_native(chunk: Binary, buffer: Binary, max_len: usize) -> (Vec<String>, String) {
+    let mut combined = Vec::with_capacity(buffer.len() + chunk.len());
+    combined.extend_from_slice(buffer.as_slice());
+    combined.extend_from_slice(chunk.as_slice());
+
     let mut complete_lines = Vec::new();
     let mut last_idx = 0;
 
-    for (idx, &byte) in combined.as_bytes().iter().enumerate() {
+    for (idx, &byte) in combined.iter().enumerate() {
         if byte == b'\n' {
-            let mut line = combined[last_idx..idx].trim_end_matches('\r').to_string();
+            let slice = &combined[last_idx..idx];
+            let clean = do_sanitize_log(slice);
+            let mut line = clean.trim_end_matches('\r').to_string();
             if line.len() > max_len {
                 line.truncate(max_len);
                 line.push_str("... [truncated]");
@@ -206,7 +220,8 @@ pub fn process_chunk_native(chunk: String, buffer: String, max_len: usize) -> (V
         }
     }
 
-    let remaining = combined[last_idx..].to_string();
+    let remaining_slice = &combined[last_idx..];
+    let remaining = String::from_utf8_lossy(remaining_slice).to_string();
     (complete_lines, remaining)
 }
 
@@ -580,12 +595,12 @@ pub fn sub_highlight_native(text: String) -> Vec<Span> {
 }
 
 #[rustler::nif]
-pub fn parse_log_line(line: String) -> (Vec<Span>, bool) {
+pub fn parse_log_line(line: Binary) -> (Vec<Span>, bool) {
     if line.is_empty() {
         return (vec![Span::new("", atoms::white())], false);
     }
 
-    let clean_line = do_sanitize_log(&line);
+    let clean_line = do_sanitize_log(line.as_slice());
     let trimmed = clean_line.trim();
 
     // 1. Try JSON
