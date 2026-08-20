@@ -70,4 +70,35 @@ defmodule ExLogFormatterTest do
     assert Enum.map(Enum.at(wrapped, 0), & &1.content) == ["1234567890"]
     assert Enum.map(Enum.at(wrapped, 1), & &1.content) == ["abcdefghij"]
   end
+
+  test "accurately handles Nginx access logs with complex URL encodings without false positives" do
+    line = ~S"""
+    172.22.0.3 - - [20/Aug/2026:23:32:48 +0000] "GET /index.php?graphql&query=query%20GetTruyenBySlug(%24slug%3A%20ID!)%20%7B%0A%20%20id%0A%7D HTTP/1.1" 200 27851 "-" "node"
+    """ |> String.trim()
+    {spans, is_error} = ExLogFormatter.format_line_with_meta(line)
+
+    assert is_error == false
+    contents = Enum.map(spans, & &1.content)
+
+    # 7B should NOT be a separate token
+    refute "7B" in contents
+    # Method should be blue
+    assert "GET" in contents
+    # Status should be green
+    assert "200" in contents
+    # IP should be magenta
+    assert "172.22.0.3" in contents
+  end
+
+  test "detects multi-language stack traces as error" do
+    python_trace = "Traceback (most recent call last):\n  File \"app.py\", line 42, in <module>"
+    java_trace = "Exception in thread \"main\" java.lang.NullPointerException\n\tat com.example.App.main(App.java:10)"
+    go_panic = "panic: runtime error: invalid memory address or nil pointer dereference"
+    elixir_err = "** (RuntimeError) something went wrong"
+
+    assert elem(ExLogFormatter.format_line_with_meta(python_trace), 1) == true
+    assert elem(ExLogFormatter.format_line_with_meta(java_trace), 1) == true
+    assert elem(ExLogFormatter.format_line_with_meta(go_panic), 1) == true
+    assert elem(ExLogFormatter.format_line_with_meta(elixir_err), 1) == true
+  end
 end
