@@ -50,4 +50,24 @@ defmodule ExLogFormatterTest do
     assert is_error == true
     assert length(spans) > 0
   end
+
+  test "parses docker log timestamps accurately" do
+    line = "2026-08-04T13:14:00.123456789Z stdout F Application ready on port 4000"
+    {ts, msg} = ExLogFormatter.parse_docker_log(line)
+    assert ts == "2026-08-04T13:14:00.123456789Z"
+    assert msg == "stdout F Application ready on port 4000"
+
+    non_docker = "Plain log line without timestamp"
+    {ts_nil, msg_raw} = ExLogFormatter.parse_docker_log(non_docker)
+    assert ts_nil == nil
+    assert msg_raw == "Plain log line without timestamp"
+  end
+
+  test "wraps spans correctly by column width" do
+    {spans, _} = ExLogFormatter.format_line_with_meta("1234567890abcdefghij")
+    wrapped = ExLogFormatter.wrap_spans(spans, 10)
+    assert length(wrapped) == 2
+    assert Enum.map(Enum.at(wrapped, 0), & &1.content) == ["1234567890"]
+    assert Enum.map(Enum.at(wrapped, 1), & &1.content) == ["abcdefghij"]
+  end
 end

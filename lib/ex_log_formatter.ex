@@ -42,4 +42,20 @@ defmodule ExLogFormatter do
   def process_chunk(chunk, buffer, max_size \\ 5000) when is_binary(chunk) and is_binary(buffer) do
     Native.process_chunk_native(chunk, buffer, max_size)
   end
+
+  @doc """
+  Parses a Docker log line by separating the ISO timestamp prefix from the payload.
+  Returns `{timestamp_or_nil, message}`.
+  """
+  def parse_docker_log(line) when is_binary(line) do
+    Native.parse_docker_log(line)
+  end
+
+  @doc """
+  Wraps a list of `ExRatatui.Text.Span` structs according to `width`.
+  Returns a list of visual lines (`[ [Span, ...], [Span, ...] ]`).
+  """
+  def wrap_spans(spans, width) when is_list(spans) and is_integer(width) do
+    Native.wrap_spans(spans, width)
+  end
 end

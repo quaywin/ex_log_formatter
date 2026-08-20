@@ -17,7 +17,7 @@ mod atoms {
     }
 }
 
-#[derive(NifStruct)]
+#[derive(NifStruct, Clone)]
 #[module = "ExRatatui.Style"]
 pub struct Style {
     pub fg: Option<Atom>,
@@ -43,7 +43,7 @@ impl Style {
     }
 }
 
-#[derive(NifStruct)]
+#[derive(NifStruct, Clone)]
 #[module = "ExRatatui.Text.Span"]
 pub struct Span {
     pub content: String,
@@ -70,10 +70,11 @@ static SUB_HIGHLIGHT_RE: OnceLock<Regex> = OnceLock::new();
 static LOGFMT_RE: OnceLock<Regex> = OnceLock::new();
 static GENERAL_LOG_RE: OnceLock<Regex> = OnceLock::new();
 static ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
+static STRICT_ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
 
 fn get_sub_highlight_re() -> &'static Regex {
     SUB_HIGHLIGHT_RE.get_or_init(|| {
-        Regex::new(r#"(?i)(?P<uuid>\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)|(?P<hash>\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{40}\b)|(?P<url>\bhttps?://[^\s]+)|(?P<ip_bracket>\[[0-9a-fA-F:]+\](?::\d{1,5})?)|(?P<ip_v4>\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::\d{1,5}|/(?:[0-9]|[12][0-9]|3[0-2]))?\b)|(?P<ip_v6>\b(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)|(?P<path>(?:^|[\s"'\x28])/(?:[a-zA-Z0-9._-]+/)*[a-zA-Z0-9._-]*)|(?P<duration>\b\d+(?:\.\d+)?(?:µs|us|ms|s|min|ns)\b)|(?P<method>\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b)|(?P<status>\b[1-5]\d{2}\b)"#).unwrap()
+        Regex::new(r#"(?i)(?P<uuid>\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)|(?P<hash>\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{40}\b)|(?P<mac>\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b)|(?P<url>\bhttps?://[^\s]+)|(?P<ip_bracket>\[[0-9a-fA-F:]+\](?::\d{1,5})?)|(?P<ip_v4>\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::\d{1,5}|/(?:[0-9]|[12][0-9]|3[0-2]))?\b)|(?P<ip_v6>\b(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)|(?P<path>(?:^|[\s"'\x28])/(?:[a-zA-Z0-9._-]+/)*[a-zA-Z0-9._-]*)|(?P<mem>\b\d+(?:\.\d+)?(?:MB|GB|KB|TB|B|MiB|GiB|KiB)\b)|(?P<duration>\b\d+(?:\.\d+)?(?:µs|us|ms|s|min|ns|m)\b)|(?P<method>\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b)|(?P<status>\b[1-5]\d{2}\b)"#).unwrap()
     })
 }
 
@@ -85,7 +86,7 @@ fn get_logfmt_re() -> &'static Regex {
 
 fn get_general_log_re() -> &'static Regex {
     GENERAL_LOG_RE.get_or_init(|| {
-        Regex::new(r#"(?i)^(?:(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s)?(?:(?:\[(?P<bracket_lvl>[a-zA-Z0-9_-]+)\]|(?P<colon_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure)\b):|(?P<bare_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure)\b))\s?)?(?P<msg>.*)$"#).unwrap()
+        Regex::new(r#"(?i)^(?:(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s)?(?:(?:\[(?P<bracket_lvl>[a-zA-Z0-9_-]+)\]|(?P<colon_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure|severe|notice)\b):|(?P<bare_lvl>\b(?:info|warn|warning|error|err|debug|fatal|trace|critical|crit|emerg|emergency|stderr|fail|failure|severe|notice)\b))\s?)?(?P<msg>.*)$"#).unwrap()
     })
 }
 
@@ -94,8 +95,6 @@ fn get_error_keywords_re() -> &'static Regex {
         Regex::new(r#"(?i)\b(?:panic|fatal|exception|crash|runtimeerror|compileerror|unhandled|traceback|backtrace)\b|\*\*\s*\(|\bcaused by:|\b\s*at\s+[a-zA-Z0-9_.$]+\("#).unwrap()
     })
 }
-
-static STRICT_ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
 
 fn get_strict_error_keywords_re() -> &'static Regex {
     STRICT_ERROR_KEYWORDS_RE.get_or_init(|| {
@@ -111,6 +110,82 @@ fn do_sanitize_log(line: &str) -> String {
 #[rustler::nif]
 pub fn sanitize_log(line: String) -> String {
     do_sanitize_log(&line)
+}
+
+#[rustler::nif]
+pub fn parse_docker_log(line: String) -> (Option<String>, String) {
+    if let Some((ts, rest)) = line.split_once(' ') {
+        let ts_trimmed = ts.trim();
+        if ts_trimmed.len() >= 19
+            && ts_trimmed.as_bytes()[4] == b'-'
+            && ts_trimmed.as_bytes()[7] == b'-'
+            && (ts_trimmed.as_bytes()[10] == b'T' || ts_trimmed.as_bytes()[10] == b' ')
+        {
+            return (Some(ts.to_string()), rest.to_string());
+        }
+    }
+    (None, line)
+}
+
+#[rustler::nif]
+pub fn wrap_spans(spans: Vec<Span>, width: usize) -> Vec<Vec<Span>> {
+    let max_w = width.max(1);
+    let mut lines = Vec::new();
+    let mut current_line = Vec::new();
+    let mut rem_w = max_w;
+
+    for span in spans {
+        if span.content.is_empty() {
+            current_line.push(span);
+            continue;
+        }
+
+        let char_count = span.content.chars().count();
+        if char_count <= rem_w {
+            rem_w -= char_count;
+            current_line.push(span);
+        } else {
+            let mut remaining_str = span.content.as_str();
+            while !remaining_str.is_empty() {
+                let remaining_chars = remaining_str.chars().count();
+                if remaining_chars <= rem_w {
+                    current_line.push(Span {
+                        content: remaining_str.to_string(),
+                        style: span.style.clone(),
+                    });
+                    rem_w -= remaining_chars;
+                    break;
+                } else {
+                    let mut split_idx = 0;
+                    for (i, (byte_idx, _)) in remaining_str.char_indices().enumerate() {
+                        if i == rem_w {
+                            split_idx = byte_idx;
+                            break;
+                        }
+                    }
+                    if split_idx == 0 && rem_w > 0 {
+                        split_idx = remaining_str.len();
+                    }
+
+                    let (chunk, rest) = remaining_str.split_at(split_idx);
+                    current_line.push(Span {
+                        content: chunk.to_string(),
+                        style: span.style.clone(),
+                    });
+
+                    lines.push(std::mem::take(&mut current_line));
+                    rem_w = max_w;
+                    remaining_str = rest;
+                }
+            }
+        }
+    }
+
+    if !current_line.is_empty() || lines.is_empty() {
+        lines.push(current_line);
+    }
+
+    lines
 }
 
 #[rustler::nif]
@@ -173,7 +248,7 @@ fn do_sub_highlight(text: &str) -> Vec<Span> {
                 spans.push(Span::new(&text[last_pos..start], atoms::white()));
             }
 
-            if cap.name("uuid").is_some() || cap.name("hash").is_some() {
+            if cap.name("uuid").is_some() || cap.name("hash").is_some() || cap.name("mac").is_some() {
                 spans.push(Span::new(token, atoms::dark_gray()));
             } else if cap.name("url").is_some() {
                 let (clean_url, trailing) = trim_trailing_punct(token);
@@ -191,6 +266,8 @@ fn do_sub_highlight(text: &str) -> Vec<Span> {
                 spans.push(Span::new(token, atoms::magenta()));
             } else if cap.name("duration").is_some() {
                 spans.push(Span::new(token, atoms::cyan()));
+            } else if cap.name("mem").is_some() {
+                spans.push(Span::new(token, atoms::yellow()));
             } else if cap.name("method").is_some() {
                 spans.push(Span::bold(token, atoms::blue()));
             } else if cap.name("status").is_some() {
@@ -222,11 +299,11 @@ fn do_sub_highlight(text: &str) -> Vec<Span> {
 
 fn get_level_atom(lvl: &str) -> Atom {
     match lvl.trim().to_lowercase().as_str() {
-        "info" => atoms::green(),
-        "warn" | "warning" => atoms::yellow(),
+        "info" | "i" => atoms::green(),
+        "warn" | "warning" | "w" => atoms::yellow(),
         "error" | "err" | "fatal" | "critical" | "crit" | "emerg" | "emergency" | "stderr"
-        | "fail" | "failure" | "panic" | "severe" | "50" | "60" | "0" | "1" | "2" | "3" => atoms::red(),
-        "debug" | "trace" => atoms::magenta(),
+        | "fail" | "failure" | "panic" | "severe" | "50" | "60" | "0" | "1" | "2" | "3" | "e" | "f" => atoms::red(),
+        "debug" | "trace" | "d" | "t" => atoms::magenta(),
         _ => atoms::cyan(),
     }
 }
@@ -257,11 +334,19 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
     let mut spans = Vec::new();
 
     let mut level_str = None;
-    for k in &["level", "severity", "lvl", "log.level", "s"] {
+    for k in &["level", "severity", "lvl", "log.level", "s", "severity_number"] {
         if let Some(v) = map.get(*k) {
             match v {
                 Value::String(s) => { level_str = Some(s.to_string()); break; },
-                Value::Number(n) => { level_str = Some(n.to_string()); break; },
+                Value::Number(n) => {
+                    let num = n.as_u64().unwrap_or(0);
+                    if num >= 17 && *k == "severity_number" {
+                        level_str = Some("ERROR".to_string());
+                    } else {
+                        level_str = Some(n.to_string());
+                    }
+                    break;
+                },
                 _ => {}
             }
         }
