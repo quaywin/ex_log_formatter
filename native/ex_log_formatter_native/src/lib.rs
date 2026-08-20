@@ -74,7 +74,7 @@ static STRICT_ERROR_KEYWORDS_RE: OnceLock<Regex> = OnceLock::new();
 
 fn get_sub_highlight_re() -> &'static Regex {
     SUB_HIGHLIGHT_RE.get_or_init(|| {
-        Regex::new(r#"(?i)(?P<uuid>\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)|(?P<hash>\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{40}\b)|(?P<mac>\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b)|(?P<url>\bhttps?://[^\s]+)|(?P<ip_bracket>\[[0-9a-fA-F:]+\](?::\d{1,5})?)|(?P<ip_v4>\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::\d{1,5}|/(?:[0-9]|[12][0-9]|3[0-2]))?\b)|(?P<ip_v6>\b(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)|(?P<path>(?:^|[\s"'\x28])/(?:[a-zA-Z0-9._~:/?#\[\]@!$&'*+,;=%-]*))|(?P<mem>\b\d+(?:\.\d+)?(?:MB|GB|KB|TB|PB|MiB|GiB|TiB|KiB|bytes?)\b|\b\d+\s+B\b)|(?P<duration>\b\d+(?:\.\d+)?(?:µs|us|ms|s|min|ns|m)\b)|(?P<method>\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b)|(?P<status>\b[1-5]\d{2}\b)"#).unwrap()
+        Regex::new(r#"(?i)(?P<uuid>\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)|(?P<hash>\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{40}\b)|(?P<mac>\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b)|(?P<url>\bhttps?://[^\s"'>\x00-\x1f]+)|(?P<ip_bracket>\[[0-9a-fA-F:]+\](?::\d{1,5})?)|(?P<ip_v4>\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::\d{1,5}|/(?:[0-9]|[12][0-9]|3[0-2]))?\b)|(?P<ip_v6>\b(?:[0-9a-fA-F]{1,4}:)+(?::[0-9a-fA-F]{1,4})+(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\b|(?:^|[\s"'\x28])::(?:/(?:[0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?)|(?P<path>(?:^|[\s"'\x28])/(?:[^\s"'>\x00-\x1f]*))|(?P<mem>\b\d+(?:\.\d+)?(?:MB|GB|KB|TB|PB|MiB|GiB|TiB|KiB|bytes?)\b|\b\d+\s+B\b)|(?P<duration>\b\d+(?:\.\d+)?(?:µs|us|ms|s|min|ns|m)\b)|(?P<method>\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b)|(?P<status>\b[1-5]\d{2}\b)"#).unwrap()
     })
 }
 
@@ -227,10 +227,26 @@ pub fn process_chunk_native(chunk: Binary, buffer: Binary, max_len: usize) -> (V
 
 fn trim_trailing_punct(s: &str) -> (&str, &str) {
     let mut end = s.len();
+    let open_parens = s.chars().filter(|&c| c == '(').count();
+    let mut close_parens = s.chars().filter(|&c| c == ')').count();
+    let open_brackets = s.chars().filter(|&c| c == '[').count();
+    let mut close_brackets = s.chars().filter(|&c| c == ']').count();
+    let open_braces = s.chars().filter(|&c| c == '{').count();
+    let mut close_braces = s.chars().filter(|&c| c == '}').count();
+
     while end > 0 {
         let last_char = s[..end].chars().last().unwrap();
-        if matches!(last_char, '"' | '\'' | ',' | ';' | ')' | ']' | '>' | '}' | '.') {
+        if matches!(last_char, '"' | '\'' | ',' | ';' | '>' | '.') {
             end -= last_char.len_utf8();
+        } else if last_char == ')' && close_parens > open_parens {
+            close_parens -= 1;
+            end -= 1;
+        } else if last_char == ']' && close_brackets > open_brackets {
+            close_brackets -= 1;
+            end -= 1;
+        } else if last_char == '}' && close_braces > open_braces {
+            close_braces -= 1;
+            end -= 1;
         } else {
             break;
         }
