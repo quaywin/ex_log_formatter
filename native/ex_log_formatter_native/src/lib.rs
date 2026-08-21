@@ -369,13 +369,13 @@ fn normalize_level_badge(lvl: &str) -> (String, Atom) {
 
 fn level_to_severity(lvl: &str) -> u8 {
     match lvl.trim().to_lowercase().as_str() {
-        "trace" | "t" | "10" => 0,
+        "trace" | "t" | "10" => 1,
         "debug" | "d" | "20" => 1,
         "info" | "i" | "notice" | "30" => 2,
         "warn" | "warning" | "w" | "40" => 3,
         "error" | "err" | "50" | "e" => 4,
         "fatal" | "critical" | "crit" | "emerg" | "emergency" | "panic" | "severe" | "60" | "0" | "1" | "2" | "3" | "f" => 5,
-        _ => 2,
+        _ => 0,
     }
 }
 
@@ -476,7 +476,7 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool, 
     };
     let severity_num = match &level_str {
         Some(lvl) => level_to_severity(lvl),
-        None => if is_err { 4 } else { 2 },
+        None => if is_err { 4 } else { 0 },
     };
 
     // Construct standard, clean, human-readable structured layout matching hl/fblog:
@@ -594,7 +594,7 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool, u8)> {
     };
     let severity_num = match level_str {
         Some(lvl) => level_to_severity(lvl),
-        None => if is_err { 4 } else { 2 },
+        None => if is_err { 4 } else { 0 },
     };
 
     let mut spans = Vec::new();
@@ -656,7 +656,7 @@ fn parse_general_log(line: &str) -> (Vec<Span>, bool, u8) {
         };
         let severity_num = match level_str {
             Some(lvl) => level_to_severity(lvl),
-            None => if is_err { 4 } else { 2 },
+            None => if is_err { 4 } else { 0 },
         };
 
         let mut spans = Vec::new();
@@ -679,7 +679,7 @@ fn parse_general_log(line: &str) -> (Vec<Span>, bool, u8) {
         (spans, is_err, severity_num)
     } else {
         let is_err = get_error_keywords_re().is_match(line);
-        let severity_num = if is_err { 4 } else { 2 };
+        let severity_num = if is_err { 4 } else { 0 };
         (do_sub_highlight(line), is_err, severity_num)
     }
 }
@@ -692,7 +692,7 @@ pub fn sub_highlight_native(text: String) -> Vec<Span> {
 #[rustler::nif]
 pub fn parse_log_line(line: Binary) -> (Vec<Span>, bool, u8) {
     if line.is_empty() {
-        return (vec![Span::new("", atoms::white())], false, 2);
+        return (vec![Span::new("", atoms::white())], false, 0);
     }
 
     let clean_line = do_sanitize_log(line.as_slice());
