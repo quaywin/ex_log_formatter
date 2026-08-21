@@ -361,6 +361,18 @@ fn is_5xx_status_str(status: &str) -> bool {
     s.len() == 3 && s.starts_with('5') && s.chars().all(|c| c.is_ascii_digit())
 }
 
+fn normalize_level_badge(lvl: &str) -> (String, Atom) {
+    match lvl.trim().to_lowercase().as_str() {
+        "info" | "i" | "30" => ("INFO".to_string(), atoms::green()),
+        "warn" | "warning" | "w" | "40" => ("WARN".to_string(), atoms::yellow()),
+        "error" | "err" | "50" | "e" => ("ERROR".to_string(), atoms::red()),
+        "fatal" | "critical" | "crit" | "emerg" | "emergency" | "panic" | "severe" | "60" | "0" | "1" | "2" | "3" | "f" => ("FATAL".to_string(), atoms::red()),
+        "debug" | "d" | "20" => ("DEBUG".to_string(), atoms::magenta()),
+        "trace" | "t" | "10" => ("TRACE".to_string(), atoms::dark_gray()),
+        other => (other.to_uppercase(), atoms::cyan()),
+    }
+}
+
 fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) {
     let mut spans = Vec::new();
 
@@ -413,10 +425,10 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         }
     }
 
-    // 4. Detect Caller / Logger
+    // 4. Detect Caller / Logger / Service Name
     let mut caller_str = None;
     let mut caller_key = None;
-    for k in &["caller", "logger", "file", "source", "target"] {
+    for k in &["caller", "logger", "file", "source", "target", "name", "app", "service"] {
         if let Some(v) = map.get(*k) {
             caller_key = Some(*k);
             match v {
@@ -457,7 +469,7 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         _ => has_truthy_error || has_5xx_status,
     };
 
-    // Construct standard, clean, human-readable structured layout:
+    // Construct standard, clean, human-readable structured layout matching hl/fblog:
     // [TIMESTAMP] [LEVEL] (CALLER) MESSAGE   key1=val1 key2=val2
     if let Some(ts) = time_str {
         spans.push(Span::new(ts, atoms::dark_gray()));
@@ -465,8 +477,8 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
     }
 
     if let Some(lvl) = &level_str {
-        let lvl_atom = get_level_atom(lvl);
-        spans.push(Span::bold(format!("[{}]", lvl.to_uppercase()), lvl_atom));
+        let (badge, lvl_atom) = normalize_level_badge(lvl);
+        spans.push(Span::bold(format!("[{}]", badge), lvl_atom));
         spans.push(Span::new(" ", atoms::white()));
     }
 
