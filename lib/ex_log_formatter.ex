@@ -24,7 +24,7 @@ defmodule ExLogFormatter do
   Formats a raw log line into a list of colored `ExRatatui.Text.Span` structs.
   """
   def format_line(line) when is_binary(line) do
-    {spans, _is_error} = Native.parse_log_line(line)
+    {spans, _is_error, _level} = Native.parse_log_line(line)
     spans
   end
 

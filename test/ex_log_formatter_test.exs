@@ -10,8 +10,9 @@ defmodule ExLogFormatterTest do
 
   test "parses JSON log lines" do
     json_log = ~s({"level":"info","msg":"User login","user_id":42})
-    {spans, is_error} = ExLogFormatter.format_line_with_meta(json_log)
+    {spans, is_error, level} = ExLogFormatter.format_line_with_meta(json_log)
     assert is_error == false
+    assert level == 2
     assert length(spans) > 0
   end
 
@@ -36,8 +37,9 @@ defmodule ExLogFormatterTest do
 
   test "parses Logfmt key=value streams" do
     logfmt = "time=2026-08-04T13:14:00Z level=info msg=\"User logged in\" ip=192.168.1.10 status=200"
-    {spans, is_error} = ExLogFormatter.format_line_with_meta(logfmt)
+    {spans, is_error, level} = ExLogFormatter.format_line_with_meta(logfmt)
     assert is_error == false
+    assert level == 2
     assert length(spans) > 0
     contents = Enum.map(spans, & &1.content)
     assert "time=" in contents
@@ -46,8 +48,9 @@ defmodule ExLogFormatterTest do
 
   test "parses traditional bracket level text logs" do
     text = "2026-08-04T13:14:00Z [ERROR] Database connection refused on port 5432"
-    {spans, is_error} = ExLogFormatter.format_line_with_meta(text)
+    {spans, is_error, level} = ExLogFormatter.format_line_with_meta(text)
     assert is_error == true
+    assert level == 4
     assert length(spans) > 0
   end
 
@@ -64,7 +67,7 @@ defmodule ExLogFormatterTest do
   end
 
   test "wraps spans correctly by column width" do
-    {spans, _} = ExLogFormatter.format_line_with_meta("1234567890abcdefghij")
+    {spans, _, _} = ExLogFormatter.format_line_with_meta("1234567890abcdefghij")
     wrapped = ExLogFormatter.wrap_spans(spans, 10)
     assert length(wrapped) == 2
     assert Enum.map(Enum.at(wrapped, 0), & &1.content) == ["1234567890"]
@@ -75,7 +78,7 @@ defmodule ExLogFormatterTest do
     line = ~S"""
     172.22.0.3 - - [20/Aug/2026:23:32:48 +0000] "GET /index.php?graphql&query=query%20GetTruyenBySlug(%24slug%3A%20ID!)%20%7B%0A%20%20id%0A%7D HTTP/1.1" 200 27851 "-" "node"
     """ |> String.trim()
-    {spans, is_error} = ExLogFormatter.format_line_with_meta(line)
+    {spans, is_error, _level} = ExLogFormatter.format_line_with_meta(line)
 
     assert is_error == false
     contents = Enum.map(spans, & &1.content)

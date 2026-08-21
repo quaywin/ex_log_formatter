@@ -328,16 +328,7 @@ fn do_sub_highlight(text: &str) -> Vec<Span> {
     }
 }
 
-fn get_level_atom(lvl: &str) -> Atom {
-    match lvl.trim().to_lowercase().as_str() {
-        "info" | "i" => atoms::green(),
-        "warn" | "warning" | "w" => atoms::yellow(),
-        "error" | "err" | "fatal" | "critical" | "crit" | "emerg" | "emergency" | "stderr"
-        | "fail" | "failure" | "panic" | "severe" | "50" | "60" | "0" | "1" | "2" | "3" | "e" | "f" => atoms::red(),
-        "debug" | "trace" | "d" | "t" => atoms::magenta(),
-        _ => atoms::cyan(),
-    }
-}
+
 
 fn is_error_level(lvl: &str) -> bool {
     let l = lvl.trim().to_lowercase();
@@ -373,7 +364,19 @@ fn normalize_level_badge(lvl: &str) -> (String, Atom) {
     }
 }
 
-fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) {
+fn level_to_severity(lvl: &str) -> u8 {
+    match lvl.trim().to_lowercase().as_str() {
+        "trace" | "t" | "10" => 0,
+        "debug" | "d" | "20" => 1,
+        "info" | "i" | "notice" | "30" => 2,
+        "warn" | "warning" | "w" | "40" => 3,
+        "error" | "err" | "50" | "e" => 4,
+        "fatal" | "critical" | "crit" | "emerg" | "emergency" | "panic" | "severe" | "60" | "0" | "1" | "2" | "3" | "f" => 5,
+        _ => 2,
+    }
+}
+
+fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool, u8) {
     let mut spans = Vec::new();
 
     // 1. Detect Level
@@ -468,6 +471,10 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         Some(lvl) if is_non_error_level(lvl) => has_truthy_error || has_5xx_status,
         _ => has_truthy_error || has_5xx_status,
     };
+    let severity_num = match &level_str {
+        Some(lvl) => level_to_severity(lvl),
+        None => if is_err { 4 } else { 2 },
+    };
 
     // Construct standard, clean, human-readable structured layout matching hl/fblog:
     // [TIMESTAMP] [LEVEL] (CALLER) MESSAGE   key1=val1 key2=val2
@@ -525,10 +532,10 @@ fn parse_json_object(map: &serde_json::Map<String, Value>) -> (Vec<Span>, bool) 
         }
     }
 
-    (spans, is_err)
+    (spans, is_err, severity_num)
 }
 
-fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
+fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool, u8)> {
     if !line.contains('=') || line.contains("=>") || line.contains("%{") {
         return None;
     }
@@ -582,6 +589,10 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
         Some(lvl) if is_non_error_level(lvl) => has_truthy_error || has_5xx_status,
         _ => has_truthy_error || has_5xx_status,
     };
+    let severity_num = match level_str {
+        Some(lvl) => level_to_severity(lvl),
+        None => if is_err { 4 } else { 2 },
+    };
 
     let mut spans = Vec::new();
     let mut last_pos = 0;
@@ -596,8 +607,8 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
 
         let k_lower = key.to_lowercase();
         if matches!(k_lower.as_str(), "level" | "lvl" | "severity") {
-            let lvl_atom = get_level_atom(clean_val);
-            spans.push(Span::bold(format!("[{}]", clean_val.to_uppercase()), lvl_atom));
+            let (badge, lvl_atom) = normalize_level_badge(clean_val);
+            spans.push(Span::bold(format!("[{}]", badge), lvl_atom));
         } else if matches!(k_lower.as_str(), "ts" | "time" | "timestamp") {
             spans.push(Span::new(clean_val, atoms::dark_gray()));
         } else if matches!(k_lower.as_str(), "msg" | "message") {
@@ -613,10 +624,10 @@ fn try_parse_logfmt(line: &str) -> Option<(Vec<Span>, bool)> {
         spans.extend(do_sub_highlight(&line[last_pos..]));
     }
 
-    Some((spans, is_err))
+    Some((spans, is_err, severity_num))
 }
 
-fn parse_general_log(line: &str) -> (Vec<Span>, bool) {
+fn parse_general_log(line: &str) -> (Vec<Span>, bool, u8) {
     let re = get_general_log_re();
     if let Some(cap) = re.captures(line) {
         let ts = cap.name("ts").map(|m| m.as_str()).unwrap_or("");
@@ -640,6 +651,10 @@ fn parse_general_log(line: &str) -> (Vec<Span>, bool) {
             Some(lvl) if is_non_error_level(lvl) => get_strict_error_keywords_re().is_match(line) || line.contains(" 500 ") || line.contains(" 502 ") || line.contains(" 503 "),
             _ => get_error_keywords_re().is_match(line) || line.contains(" 500 ") || line.contains("HTTP 5"),
         };
+        let severity_num = match level_str {
+            Some(lvl) => level_to_severity(lvl),
+            None => if is_err { 4 } else { 2 },
+        };
 
         let mut spans = Vec::new();
         if !ts.is_empty() {
@@ -647,21 +662,22 @@ fn parse_general_log(line: &str) -> (Vec<Span>, bool) {
         }
 
         if !bracket_lvl.is_empty() {
-            let lvl_atom = get_level_atom(bracket_lvl);
-            spans.push(Span::bold(format!("[{}] ", bracket_lvl), lvl_atom));
+            let (badge, lvl_atom) = normalize_level_badge(bracket_lvl);
+            spans.push(Span::bold(format!("[{}] ", badge), lvl_atom));
         } else if !colon_lvl.is_empty() {
-            let lvl_atom = get_level_atom(colon_lvl);
-            spans.push(Span::bold(format!("{}: ", colon_lvl), lvl_atom));
+            let (badge, lvl_atom) = normalize_level_badge(colon_lvl);
+            spans.push(Span::bold(format!("{}: ", badge), lvl_atom));
         } else if !bare_lvl.is_empty() {
-            let lvl_atom = get_level_atom(bare_lvl);
-            spans.push(Span::bold(format!("{} ", bare_lvl), lvl_atom));
+            let (badge, lvl_atom) = normalize_level_badge(bare_lvl);
+            spans.push(Span::bold(format!("{} ", badge), lvl_atom));
         }
 
         spans.extend(do_sub_highlight(msg));
-        (spans, is_err)
+        (spans, is_err, severity_num)
     } else {
         let is_err = get_error_keywords_re().is_match(line);
-        (do_sub_highlight(line), is_err)
+        let severity_num = if is_err { 4 } else { 2 };
+        (do_sub_highlight(line), is_err, severity_num)
     }
 }
 
@@ -671,9 +687,9 @@ pub fn sub_highlight_native(text: String) -> Vec<Span> {
 }
 
 #[rustler::nif]
-pub fn parse_log_line(line: Binary) -> (Vec<Span>, bool) {
+pub fn parse_log_line(line: Binary) -> (Vec<Span>, bool, u8) {
     if line.is_empty() {
-        return (vec![Span::new("", atoms::white())], false);
+        return (vec![Span::new("", atoms::white())], false, 2);
     }
 
     let clean_line = do_sanitize_log(line.as_slice());
@@ -695,18 +711,18 @@ pub fn parse_log_line(line: Binary) -> (Vec<Span>, bool) {
             let json_part = &trimmed[idx..];
             if let Ok(value) = serde_json::from_str::<Value>(json_part) {
                 if let Some(map) = value.as_object() {
-                    let (mut prefix_spans, p_err) = parse_general_log(prefix);
-                    let (json_spans, j_err) = parse_json_object(map);
+                    let (mut prefix_spans, p_err, p_sev) = parse_general_log(prefix);
+                    let (json_spans, j_err, j_sev) = parse_json_object(map);
                     prefix_spans.extend(json_spans);
-                    return (prefix_spans, p_err || j_err);
+                    return (prefix_spans, p_err || j_err, p_sev.max(j_sev));
                 }
             }
         }
     }
 
     // 2. Try Logfmt
-    if let Some((spans, is_err)) = try_parse_logfmt(&clean_line) {
-        return (spans, is_err);
+    if let Some((spans, is_err, sev)) = try_parse_logfmt(&clean_line) {
+        return (spans, is_err, sev);
     }
 
     // 3. General Regex Log + Sub-highlight
